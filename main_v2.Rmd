@@ -1,0 +1,1981 @@
+---
+title: "Frontier Walls, Labour Energetics and Qin Imperial Collapse"
+author:
+  - Zehao Li
+  - Giacomo Fontana
+  - Andrew Bevan
+date: "2024-03-01"
+keep_md: true
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Setup
+
+```{r}
+library(knitr) # For dynamic report generation
+library(tidyverse) # Comprehensive suite for data manipulation and visualization
+library(sf) # Handling of spatial data and geometries
+library(units) # Support for measurement units, useful when dropping geometry for spatial data
+library(shotGroups) # Analysis of shot groupings, including minimum bounding box calculation
+library(cluster) # Various algorithms for clustering data
+library(factoextra) # Visualization tools for clustering
+library(ggplot2) # Core plotting system in the tidyverse
+library(ggpubr) # Enhancements for ggplot2 to easily create publication-ready plots
+library(compareGroups) # Facilitates comparison of groups, mainly through plots
+library(ggspatial) # Adds spatial features like scale bars to ggplot2 plots
+library(ggsci) # Provides scientific journal and sci-fi themed color palettes
+library(kableExtra) # Enables creation and customization of HTML or LaTeX tables
+library(scales) # For scaling functions for visualizations
+library(ggstatsplot) # Extension of ggplot2 for creating statistical plots easily
+library(statsExpressions) # Simplifies the process of creating expressions with statistical details
+
+# Custom theme definition for ggplot2 plots
+mytheme <- theme(line = element_blank(), # Remove line elements
+                 panel.grid.major = element_blank(), # No major grid lines
+                 panel.grid.minor = element_blank(), # No minor grid lines
+                 panel.background = element_blank(), # Transparent background
+                 axis.text.x = element_blank(), # Hide x-axis text
+                 axis.text.y = element_blank(), # Hide y-axis text
+                 axis.title.x = element_blank(), # Hide x-axis title
+                 axis.title.y = element_blank(), # Hide y-axis title
+                 plot.title = element_text(size = 8), # Small plot title
+                 legend.key.height = unit(1, 'cm'), # Custom legend key height
+                 legend.key.width = unit(5, 'cm'), # Custom legend key width
+                 legend.title = element_text(size=10), # Custom size for legend title
+                 legend.text = element_text(size = 10), # Custom size for legend text
+                 legend.position="bottom", # Place legend at the bottom
+                 legend.box = "horizontal", # Arrange legend items horizontally
+                 plot.margin = margin(t = 0,  # Top margin
+                                      r = 0,  # Right margin
+                                      b = 0,  # Bottom margin
+                                      l = 0)) # Left margin
+
+# Custom scale annotation for adding to plots (like scale bars)
+myscale <- annotation_scale(aes(width_hint=0.1, style="ticks", location='br'), # Aesthetic settings for the scale bar
+                            line_width=1.5, # Line width of the scale bar
+                            height=unit(0.6, "cm"), # Height of the scale bar
+                            pad_y=unit(0.9, "cm"), # Vertical padding
+                            pad_x=unit(2.1, "cm"), # Horizontal padding
+                            text_cex = 1.5) # Text size multiplier
+```
+
+## Load data
+
+```{r}
+#| label: Load data
+#| output: false
+# Load the 'wall' shapefile into R as a spatial dataframe, and then perform a series of transformations:
+wall <- st_read("Data/wall.shp") %>% # Use st_read to import the shapefile
+  rename(Site = Site_ID) %>% # Rename the 'Site_ID' column to 'Site' for consistency or clarity
+  mutate(ID = row_number()) # Add a new column 'ID' that contains a unique identifier for each row/feature
+# After loading and transforming, replace any zero values in the 'Depth' column with NA (to handle missing or undefined depths)
+wall$Depth[wall$Depth == 0] <- NA
+
+# Load the 'wallgap' shapefile as a spatial dataframe. This dataset likely represents gaps in the wall.
+# Similar to the first, it renames 'Site_ID' to 'Site' for consistency across datasets.
+wallgap <- st_read("Data/gap.shp") %>%
+  rename(Site = Site_ID)
+
+# Load the 'wallfilled' shapefile as a spatial dataframe. This file likely represents areas of the wall that have been filled in.
+# It also renames 'Site_ID' to 'Site', maintaining consistency with the previous datasets.
+wallfilled <- st_read("Data/filled.shp") %>%
+  rename(Site = Site_ID)
+```
+
+# Stone-built Wall Models Generation
+
+```{r}
+#| fig-width: 15  # This chunk option sets the default figure width to 15 inches for the output.
+#| fig-height: 14 # This chunk option sets the default figure height to 14 inches for the output.
+
+# Begin creating a plot using ggplot2 package, with 'wall' data.
+fig.walls <- ggplot(wall) +
+  geom_sf(size = 0.1) + # Adds spatial data to the plot. 'geom_sf' is used for simple features objects, with a line size of 0.1.
+  mytheme + # Adds a custom ggplot2 theme, stored in the variable 'mytheme', to style the plot.
+  myscale + # Adds custom scales for the plot, stored in the variable 'myscale'. Could adjust colors, axes, etc.
+  
+  # Annotates the plot with text at specified locations.
+  annotate("text", x = -14, y = 4, size=7.5, label = "Hayehutong") +
+  annotate("text", x = -14, y = -2, size=7.5, label = "Sichenggong") +
+  annotate("text", x = -14, y = -8, size=7.5, label = "Xiniwusu") +
+  annotate("text", x = -14, y = -14, size=7.5, label = "Yonghegong") +
+  annotate("text", x = -14, y = -20, size=7.5, label = "Bayinnuru") # Each 'annotate' function call adds a label at specified coordinates with a given text size and label.
+
+fig.walls # This line actually generates and displays the plot stored in 'fig.walls'.
+
+# Saves the 'fig.walls' plot to a PNG file in the specified path with given dimensions and resolution.
+ggsave("fig.walls.png", path="images", width = 25, height = 15, units = "in", dpi=600)
+
+```
+
+## Models
+
+```{r}
+#| fig-width: 9  # Sets the default figure width to 9 inches for the output.
+#| fig-height: 7 # Sets the default figure height to 7 inches for the output (corrected to fig-height).
+
+# Set the site of interest for the visualization.
+example <- "Hayehutong"
+
+# Create a plot 'a' showing the original model for the specified site.
+a <- ggplot(data = (subset(wall, wall$Site == example))) + 
+  geom_sf(size = 0.1) + # Plot spatial features with a border size of 0.1.
+  mytheme + # Apply custom styling from the 'mytheme' variable.
+  ggtitle(paste(example, "model")) # Title the plot with the site name and "model".
+
+# Create a plot 'b' showing the filled model for the specified site.
+b <- ggplot(data = (subset(wallfilled, wallfilled$Site == example))) +
+  geom_sf(size = 0.1) + # Plot spatial features with a border size of 0.1.
+  mytheme + # Apply the same custom styling.
+  ggtitle(paste(example, "filled model")) # Title this plot with "filled model".
+
+# Create a plot 'c' showing the gap model for the specified site.
+c <- ggplot(data = (subset(wallgap, wallgap$Site == example))) +
+  geom_sf(size = 0.1) + # Plot spatial features with a border size of 0.1.
+  mytheme + # Apply the same custom styling.
+  ggtitle(paste(example, "gap model")) + # Title this plot with "gap model".
+  annotation_scale(aes(width_hint=0.11, style="ticks", location='br'), # Add a scale annotation to the plot.
+                   line_width=1.5,
+                   height=unit(0.45, "cm"),
+                   pad_y=unit(0, "cm"),
+                   pad_x=unit(0, "cm"),
+                   text_cex = 1.5)
+
+# Arrange the three plots vertically in a single figure.
+fig.models <- ggarrange(a, b, c, nrow = 3, align = "v")
+
+fig.models # Display the arranged figure.
+
+# Save the arranged figure to a PNG file with specified dimensions and resolution.
+ggsave("fig.models.png", path="images", width = 15, height = 7, units = "in", dpi=600)
+
+```
+
+## Area Calculation
+
+```{r}
+#| label: Area Calculation
+#| output: false
+wall$Area <- st_area(wall)   # Calculates the area of each feature in the 'wall' spatial object and assigns these values to a new column 'Area' in the 'wall' dataset.
+
+wall <- drop_units(wall)     # Removes the units from the 'Area' values calculated above, making the 'wall' dataset easier to work with for further analysis or visualization.
+```
+
+### Area plot
+
+```{r}
+#| fig-width: 9
+#| fig.height: 7
+# Extract the 'Area' column from 'wall' dataset.
+x <- wall$Area
+
+# Create a vector containing the minimum and maximum values of 'Area'.
+ls_val <- c(min(x), max(x))
+
+# Define a gradient fill scale for visualization, from light gray to black, based on the 'Area' values.
+myfill <- scale_fill_gradient(limits = c(min(x),max(x)), low = "gray80", high = "black",
+                              na.value = "white", breaks = ls_val,
+                              labels=c(round(min(x), digits=2),
+                                       round(max(x), digits=2)))
+
+# Construct the plot using 'ggplot2' and 'sf' packages.
+fig.area <- ggplot(wall, aes(fill = Area)) + # Set 'Area' as the fill aesthetic.
+  geom_sf(size = 0.06) + # Plot the spatial data with a border size of 0.06.
+  mytheme + # Apply custom theme settings.
+  myscale + # Apply custom scale settings.
+  myfill + # Apply the gradient fill defined earlier.
+  # Adjust the colorbar guide to match specified aesthetics.
+  guides(fill = guide_colourbar(barwidth = 0.5, barheight = 2, label.position = "left"), ticks = "none") +
+  theme(legend.position = c(0.935, 0.25)) + # Position the legend.
+  # Annotate specific locations with labels.
+  annotate("text", x = -14, y = 4, size=2.5, label = "Hayehutong") +
+  annotate("text", x = -14, y = -2, size=2.5, label = "Sichenggong") +
+  annotate("text", x = -14, y = -8, size=2.5, label = "Xiniwusu") +
+  annotate("text", x = -14, y = -14, size=2.5, label = "Yonghegong") +
+  annotate("text", x = -14, y = -20, size=2.5, label = "Bayinnuru")
+
+# Display the plot.
+fig.area
+```
+
+### Calculate rectangularity using minimum bounding box
+
+```{r}
+#| output: false
+#| cache: true
+# Add columns mbb_Area and index
+# Initialize new columns in 'wall' with NA values
+wall["mbb_Area"] <- NA
+wall["Rectangularity"] <- NA
+
+# Initialize a text progress bar to monitor the loop's progress
+pb <- txtProgressBar(min=1, max=nrow(wall), style=3)
+
+# Iterate over each row in 'wall'
+for(i in 1:nrow(wall)) {
+  # Extract the matrix of coordinates for the i-th feature's geometry
+  mat <- wall[i, ][[3]][[1]][[1]]
+  
+  # Calculate the minimum bounding box (mbb) for the feature
+  mbb <- getMinBBox(mat)
+  
+  # Calculate the area of the mbb and store it in the 'mbb_Area' column
+  wall[i,]$mbb_Area <- mbb$width*mbb$height
+  
+  # Calculate the Rectangularity index (Area of the shape / Area of the mbb) and store it
+  wall[i,]$Rectangularity <- wall[i,]$Area/wall[i,]$mbb_Area
+  
+  # Update the progress bar
+  setTxtProgressBar(pb, i)
+}
+
+# Close the progress bar after the loop completes
+close(pb)
+
+```
+
+### Extremes in rectangularity
+
+```{r}
+#| fig-width: 9
+#| fig.height: 7
+#| 
+# Identifies the index of the feature with the minimum rectangularity (worst fit).
+n <- which.min(wall$Rectangularity)
+
+# Extracts the coordinates matrix for this feature to plot its original geometry.
+mat <- wall[n,][[3]][[1]][[1]]
+
+# Calculates the oriented minimum bounding box (MBB) for this feature.
+mbb <- getMinBBox(mat)
+
+# Creates a plot 'a' visualizing this feature, its points, and its MBB.
+a <- ggplot(data = wall[n,]) +
+  geom_sf() + # Plots the feature using simple features geometry.
+  geom_point(data=(as.data.frame(mat)), aes(x = V1, y = V2), size=0.6) + # Plots the original points of the feature.
+  geom_polygon(data=as.data.frame(mbb$pts), aes(x = V1, y = V2), color="black", size=0.8, fill="transparent") + # Plots the MBB as a transparent polygon.
+  mytheme + # Applies a custom theme for consistent styling.
+  labs(caption = c(paste("Worst rectangularity fit =", round(wall[n,]$Rectangularity, digits = 2)))) # Adds a caption with the rectangularity index.
+
+# Identifies the index of the feature with the maximum rectangularity (best fit).
+n <- which.max(wall$Rectangularity)
+
+# The next few lines repeat the process for the best fit, similar to the worst fit.
+mat <- wall[n,][[3]][[1]][[1]]
+mbb <- getMinBBox(mat)
+
+# Creates a plot 'b' for the best fit.
+b <- ggplot(data = wall[n,]) +
+  geom_sf() +
+  geom_point(data=(as.data.frame(mat)), aes(x = V1, y = V2), size=0.6) +
+  geom_polygon(data=as.data.frame(mbb$pts), aes(x = V1, y = V2), color="black", size=0.8, fill="transparent") +
+  mytheme +
+  labs(caption = c(paste("Best rectangularity fit =", round(wall[n,]$Rectangularity, digits = 2))))
+
+# Combines plots 'a' and 'b' side by side.
+fig.extremes <- ggarrange(a, b, ncol = 2, align = "hv") +
+  theme(plot.margin = unit(c(1.5,1.5,1.5,1.5),"cm"))
+fig.extremes
+
+```
+
+### Visualizing rectangularity
+
+```{r}
+#| fig-width: 9
+#| fig.height: 7
+
+# Extract the 'Rectangularity' column from the 'wall' dataset.
+x <- wall$Rectangularity
+
+# Determine the minimum and maximum values of rectangularity for setting the scale.
+ls_val <- c(min(x), max(x))
+
+# Create a gradient fill scale for coloring the features based on their rectangularity values.
+myfill <- scale_fill_gradient(limits = c(min(x),max(x)), low = "gray90", high = "gray20",
+                              na.value = "white", breaks = ls_val,
+                              labels=c(round(min(x), digits=2),
+                                       round(max(x), digits=2)))
+
+# Construct the plot
+fig.rectangularity <- ggplot(wall, aes(fill = Rectangularity)) + # Base plot with 'Rectangularity' as fill
+  geom_sf(size = 0.06) + # Draw the features with a border size of 0.06
+  mytheme + # Apply custom theme settings
+  myscale + # Apply custom scale settings
+  myfill + # Apply the gradient fill defined earlier
+  # Adjust the colorbar guide to match specified aesthetics
+  guides(fill = guide_colourbar(barwidth = 0.5, barheight = 2, label.position = "left"), ticks = "none") +
+  theme(legend.position = c(0.935, 0.25)) + # Position the legend
+  # Annotate specific locations with labels
+  annotate("text", x = -14, y = 4, size=4.5, label = "Hayehutong") +
+  annotate("text", x = -14, y = -2, size=4.5, label = "Sichenggong") +
+  annotate("text", x = -14, y = -8, size=4.5, label = "Xiniwusu") +
+  annotate("text", x = -14, y = -14, size=4.5, label = "Yonghegong") +
+  annotate("text", x = -14, y = -20, size=4.5, label = "Bayinnuru")
+
+# Display the plot
+fig.rectangularity
+```
+
+## Gap Calculation
+
+```{r}
+#| label: Variable gap calculation 
+#| output: false
+#| cache: true
+
+# Create a temporary copy of the 'wall' dataset.
+tmp <- wall
+
+# Generate a buffer around each feature in 'wall' with a specified distance.
+tmp$buffer <- st_buffer(wall, dist = 0.01)
+
+# Determine which buffered features are entirely within the 'wallfilled' dataset.
+# 'st_covered_by' checks if the buffer is within 'wallfilled'; 'lengths > 0' ensures there is an overlap.
+tmp$covered <- st_covered_by(tmp$buffer, wallfilled) %>% lengths > 0
+
+# Filter 'tmp' to keep only features not at the edge, i.e., those covered by 'wallfilled'.
+tmp <- subset(tmp, tmp$covered[{TRUE}])
+
+# Initialize a 'Gap' column in 'tmp' to store calculated gap areas.
+tmp["Gap"] <- NA
+
+# Initialize a text progress bar for loop monitoring.
+pb <- txtProgressBar(min=1, max=nrow(wallgap), style=3)
+
+# Loop through each feature in 'tmp'.
+for(i in 1:nrow(tmp)) {
+  # Identify gaps touching the current feature using 'st_touches' and extract them.
+  tmp1 <- st_touches(tmp, wallgap)[[i]]
+  tmp2 <- st_sf(wallgap$geometry[tmp1])
+
+  # Calculate the area of each identified gap.
+  tmp2$area <- st_area(tmp2)
+
+  # Sum the areas of all gaps touching the current feature and store in 'Gap'.
+  tmp[i,]$Gap <- sum(tmp2$area)
+
+  # Update progress bar.
+  setTxtProgressBar(pb, i)
+}
+
+# Close the progress bar after completing the loop.
+close(pb)
+```
+
+#Join gap area to data frame dataframe
+
+```{r}
+# Join the gap area information from 'tmp' back to the original 'wall' dataset.
+wall <- left_join(wall, 
+                  # Remove the geometry column from 'tmp' to prepare for the join.
+                  st_drop_geometry(tmp) %>%
+                  # Select only the 'ID' and 'Gap' columns from 'tmp' for the join.
+                  dplyr::select(ID, Gap), 
+                  # Specify the column ('ID') to use for matching rows between the two datasets.
+                  by = "ID")
+
+```
+
+#Plot gap area
+
+```{r}
+#| fig-width: 7
+#| fig.height: 3
+
+# Subset the 'wall' dataset to include only rows where 'Gap' is not NA, then extract 'Gap' values.
+x <- subset(wall, !is.na(Gap))$Gap
+
+# Determine the minimum and maximum values of 'Gap' for use in the color gradient.
+ls_val <- c(min(x), max(x))
+
+# Define a color gradient for the 'Gap' values from light gray to dark gray.
+myfill <- scale_fill_gradient(limits = c(min(x),max(x)), low = "gray90", high = "gray20",
+                              na.value = "white", breaks = ls_val,
+                              labels=c(round(min(x), digits=2),
+                                       round(max(x), digits=2)))
+
+# Construct the plot.
+fig.gap <- ggplot(wall, aes(fill = Gap)) + # Base plot with 'Gap' determining the fill color.
+  geom_sf(size = 0.06) + # Draw the spatial features with a border size of 0.06.
+  mytheme + # Apply custom theme settings for consistent styling.
+  myscale + # Apply custom scale settings for consistent scaling.
+  myfill + # Apply the defined color gradient to the plot.
+  # Define the appearance of the colorbar legend.
+  guides(fill = guide_colourbar(barwidth = 0.5, barheight = 2, label.position = "left"), ticks = "none") +
+  theme(legend.position = c(0.935, 0.25)) + # Position the legend.
+  # Annotate specific locations on the map for additional context.
+  annotate("text", x = -14, y = 4, size=2.5, label = "Hayehutong") +
+  annotate("text", x = -14, y = -2, size=2.5, label = "Sichenggong") +
+  annotate("text", x = -14, y = -8, size=2.5, label = "Xiniwusu") +
+  annotate("text", x = -14, y = -14, size=2.5, label = "Yonghegong") +
+  annotate("text", x = -14, y = -20, size=2.5, label = "Bayinnuru")
+
+# Display the plot.
+fig.gap
+
+
+```
+
+## General statistics
+
+```{r}
+#| label: General statistics 
+#| output: false
+#| cache: true 
+
+# Prepare the dataset for total statistics by duplicating 'wall' and setting a uniform site label.
+wallstats <- wall
+wallstats$Site <- "Total sample" # Assign a common site label for aggregate statistics.
+
+# Group the data by 'Site' after removing geometric data, then calculate various statistics.
+wallstats <- group_by(st_drop_geometry(wallstats), Site) %>%
+summarise(
+  count = n(), # Count of features.
+  "Area_mean" = mean(Area, na.rm = TRUE), # Mean of the Area column, excluding NA values.
+  "Area_sd" = sd(Area, na.rm = TRUE), # Standard deviation of the Area column, excluding NA values.
+  "Area_IQR" = IQR(Area, na.rm = TRUE), # Interquartile range of the Area column, excluding NA values.
+  "Rectangularity_mean" = mean(Rectangularity, na.rm = TRUE), # Mean of Rectangularity, excluding NA values.
+  "Rectangularity_sd" = sd(Rectangularity, na.rm = TRUE), # Standard deviation of Rectangularity, excluding NA values.
+  "Rectangularity_IQR" = IQR(Rectangularity, na.rm = TRUE), # Interquartile range of Rectangularity, excluding NA values.
+  "Gap_mean" = mean(Gap, na.rm = TRUE), # Mean of Gap areas, excluding NA values.
+  "Gap_sd" = sd(Gap, na.rm = TRUE), # Standard deviation of Gap areas, excluding NA values.
+  "Gap_IQR" = IQR(Gap, na.rm = TRUE), # Interquartile range of Gap areas, excluding NA values.
+  "Depth_mean" = mean(Depth, na.rm = TRUE), # Mean of Depth, excluding NA values.
+  "Depth_sd" = sd(Depth, na.rm = TRUE), # Standard deviation of Depth, excluding NA values.
+  "Depth_IQR" = IQR(Depth, na.rm = TRUE) # Interquartile range of Depth, excluding NA values.
+)
+
+# Calculate statistics for each site separately by grouping the data without geometries.
+sitestats <- group_by(st_drop_geometry(wall), Site) %>%
+summarise(
+  # Repeat the same set of statistical calculations for each site.
+  count = n(),
+  "Area_mean" = mean(Area, na.rm = TRUE),
+  "Area_sd" = sd(Area, na.rm = TRUE),
+  "Area_IQR" = IQR(Area, na.rm = TRUE),
+  "Rectangularity_mean" = mean(Rectangularity, na.rm = TRUE),
+  "Rectangularity_sd" = sd(Rectangularity, na.rm = TRUE),
+  "Rectangularity_IQR" = IQR(Rectangularity, na.rm = TRUE),
+  "Gap_mean" = mean(Gap, na.rm = TRUE),
+  "Gap_sd" = sd(Gap, na.rm = TRUE),
+  "Gap_IQR" = IQR(Gap, na.rm = TRUE),
+  "Depth_mean" = mean(Depth, na.rm = TRUE),
+  "Depth_sd" = sd(Depth, na.rm = TRUE),
+  "Depth_IQR" = IQR(Depth, na.rm = TRUE)
+)
+
+# Combine the site-specific statistics and the overall statistics into a single data frame.
+statistics <- sitestats
+statistics[nrow(statistics) + 1,] = wallstats # Append the total statistics row to the 'statistics' data frame.
+```
+
+## Figure of stone blocks variability across the different sites.
+
+```{r}
+#| label: fig-variablesDistribution 
+#| fig-cap: Stone blocks variability across the different sites. 
+#| fig-width: 14
+#| fig.height: 10
+# Create a density plot for the 'Area' variable, colored by 'Site'.
+a <- ggplot(wall, aes(x=Area, color=Site)) +
+  geom_density() + # Adds a density plot
+  scale_color_simpsons() + # Applies a color scale based on 'The Simpsons' (assumes a custom scale or package)
+  theme_minimal() + # Uses a minimal theme for aesthetics
+  xlab("Area") + # Label for the x-axis
+  ylab("Density") # Label for the y-axis
+
+# Create a density plot for the 'Rectangularity' variable, colored by 'Site'.
+b <- ggplot(wall, aes(x=Rectangularity, color=Site)) +
+  geom_density() + # Adds a density plot
+  scale_color_simpsons() + # Applies the same Simpsons color scale
+  theme_minimal() + # Uses the same minimal theme
+  ylab(NULL) # Removes the y-axis label
+
+# Create a density plot for the 'Gap' variable (excluding NA values), colored by 'Site'.
+c <- ggplot(data=subset(wall, !is.na(Gap)), aes(x=Gap, color=Site)) +
+  geom_density() + # Adds a density plot
+  scale_color_simpsons() + # Applies the same Simpsons color scale
+  theme_minimal() + # Uses the same minimal theme
+  ylab(NULL) # Removes the y-axis label
+
+# Arrange the three plots side by side with a common legend at the bottom.
+fig.variablesDistribution <- ggarrange(a, b, c, ncol = 3, common.legend = TRUE, legend ="bottom")
+
+# Display the arranged plots.
+fig.variablesDistribution
+
+```
+
+## Results of the Shapiro-Wilk normality test
+
+```{r}
+#| label: tbl-normalDistribution 
+#| tbl-cap: Results of the Shapiro-Wilk normality test. 
+# Perform Shapiro-Wilk normality tests for 'Area' at each site.
+a <- shapiro.test(wall$Area[wall$Site == "Hayehutong"])
+b <- shapiro.test(wall$Area[wall$Site == "Sichenggong"])
+c <- shapiro.test(wall$Area[wall$Site == "Yonghegong"])
+d <- shapiro.test(wall$Area[wall$Site == "Xiniwusu"])
+e <- shapiro.test(wall$Area[wall$Site == "Bayinnuru"])
+
+# Extract and combine the test statistics (W) into a vector.
+tmp1 <- unname(c(a$statistic,b$statistic,c$statistic,d$statistic,e$statistic))
+
+# Extract and combine the p-values into a vector.
+tmp2 <- unname(c(a$p.value,b$p.value,c$p.value,d$p.value,e$p.value))
+
+# Create a data frame with the test statistics and p-values.
+results <- data.frame(tmp1, tmp2)
+colnames(results) <- c("w","p-value") # Rename columns for clarity.
+
+# Set row names to correspond to the sites tested.
+rownames(results) <- c("Hayehutong","Sichenggong","Yonghegong","Xiniwusu","Bayinnuru")
+
+# Format the p-values for readability.
+results$`p-value` <- format(results$`p-value`, digits = 3)
+
+# Use 'kable' to create a formatted table and 'kable_styling' to apply styling options.
+kable(results) %>%
+kable_styling(bootstrap_options = c("condensed"),
+              full_width = T,
+              position = "left")
+```
+
+## Results of the Fligner-Killeen test of homogeneity of variances
+
+```{r}
+#| label: tbl-homogeneity
+#| tbl-cap: Results of the Fligner-Killeen test of homogeneity of variances.
+
+# Perform Fligner-Killeen test to check homogeneity of variances for 'Area' across 'Site'.
+a <- fligner.test(Area ~ Site, data = wall)
+
+# Perform Fligner-Killeen test for 'Rectangularity' across 'Site'.
+b <- fligner.test(Rectangularity ~ Site, data = wall)
+
+# Perform Fligner-Killeen test for 'Gap' across 'Site'.
+c <- fligner.test(Gap ~ Site, data = wall)
+
+# Combine the median chi-squared test statistics from each test into a vector.
+tmp1 <- unname(c(a$statistic, b$statistic, c$statistic))
+
+# Combine the degrees of freedom (df) from each test into a vector.
+tmp2 <- unname(c(a$parameter, b$parameter, c$parameter))
+
+# Combine the p-values from each test into a vector.
+tmp3 <- unname(c(a$p.value, b$p.value, c$p.value))
+            
+# Create a data frame from the combined test statistics, degrees of freedom, and p-values.
+results <- data.frame(tmp1, tmp2, tmp3)
+# Rename the columns for better readability.
+colnames(results) <- c("med chi-squared", "df", "p-value")
+# Assign row names corresponding to the variables tested.
+rownames(results) <- c("Area", "Rectangularity", "Gap")
+
+# Format the p-values in the results for better readability.
+results$`p-value` <- format(results$`p-value`, digits = 3)
+
+# Create a formatted table of the results using 'kable' from 'knitr' and style it with 'kable_styling' from 'kableExtra'.
+kable(results) %>%
+  kable_styling(bootstrap_options = c("condensed"),
+                full_width = T,
+                position = "left")
+
+```
+
+## Results of the Kruskal-Wallis test and Dunn pairwise comparison
+
+```{r}
+#| label: fig-statistics
+#| fig-cap: Results of the Kruskal-Wallis test and Dunn pairwise comparison.
+#| fig-width: 16
+#| fig.height: 8
+# Drop geometry information from 'wall' to work with statistical data only.
+dat <- st_drop_geometry(wall)
+
+# Generate a box plot for 'Area' across different 'Site', including statistical analysis.
+dat_res <- ggbetweenstats(data = dat, x = Site, y = Area,
+                          plot.type = "box",
+                          type = "nonparametric",
+                          pairwise.comparisons = TRUE,  # Perform post-hoc tests if more than 2 groups
+                          pairwise.display = "significant",  # Display only significant differences
+                          ggsignif.args = list(textsize = 4, tip_length = 0.01),  # Customize significance labels
+                          bf.message = FALSE,  # Disable Bayes Factor message
+                          centrality.plotting = FALSE,  # Disable plotting of central measure
+                          package = "ggsci",  # Use 'ggsci' package for aesthetics
+                          palette = "springfield_simpsons",  # Simpsons theme palette
+                          xlab = "")  # Remove x-axis label
+a <- dat_res +
+  labs(title = dat_res[["labels"]][["subtitle"]][[2]],  # Use generated subtitle as title
+       subtitle = dat_res[["labels"]][["subtitle"]][[3]]) +  # Use generated subtitle
+  theme_minimal() +  # Use minimal theme for plot
+  theme(plot.title = element_text(size = 10), legend.position = "none")  # Customize plot title and remove legend
+
+# For 'Rectangularity'
+dat_res <- ggbetweenstats(data = dat, x = Site, y = Rectangularity,
+                          plot.type = "box",
+                          type = "nonparametric",
+                          pairwise.comparisons = TRUE,  # Perform post-hoc tests if more than 2 groups
+                          pairwise.display = "significant",  # Display only significant differences
+                          ggsignif.args = list(textsize = 4, tip_length = 0.01),  # Customize significance labels
+                          bf.message = FALSE,  # Disable Bayes Factor message
+                          centrality.plotting = FALSE,  # Disable plotting of central measure
+                          package = "ggsci",  # Use 'ggsci' package for aesthetics
+                          palette = "springfield_simpsons",  # Simpsons theme palette
+                          xlab = "")  # Remove x-axis label
+b <- dat_res +
+  labs(title = dat_res[["labels"]][["subtitle"]][[2]],  # Use generated subtitle as title
+       subtitle = dat_res[["labels"]][["subtitle"]][[3]]) +  # Use generated subtitle
+  theme_minimal() +  # Use minimal theme for plot
+  theme(plot.title = element_text(size = 10), legend.position = "none")  # Customize plot title and remove legend
+
+# For 'Gap', making sure to handle any NAs in 'Gap' similarly
+dat_res <- ggbetweenstats(data = dat, x = Site, y = Gap,
+                          plot.type = "box",
+                          type = "nonparametric",
+                          pairwise.comparisons = TRUE,  # Perform post-hoc tests if more than 2 groups
+                          pairwise.display = "significant",  # Display only significant differences
+                          ggsignif.args = list(textsize = 4, tip_length = 0.01),  # Customize significance labels
+                          bf.message = FALSE,  # Disable Bayes Factor message
+                          centrality.plotting = FALSE,  # Disable plotting of central measure
+                          package = "ggsci",  # Use 'ggsci' package for aesthetics
+                          palette = "springfield_simpsons",  # Simpsons theme palette
+                          xlab = "")  # Remove x-axis label
+c <- dat_res +
+  labs(title = dat_res[["labels"]][["subtitle"]][[2]],  # Use generated subtitle as title
+       subtitle = dat_res[["labels"]][["subtitle"]][[3]]) +  # Use generated subtitle
+  theme_minimal() +  # Use minimal theme for plot
+  theme(plot.title = element_text(size = 10), legend.position = "none")  # Customize plot title and remove legend
+```
+
+## Cluster calculation
+
+```{r}
+#| label: cluster calculation
+#| output: false
+# Create a subset of 'wall' with only ID, Area, and Rectangularity columns.
+subset_wall <- wall[c("ID", "Area", "Rectangularity")]
+# Remove rows with missing values in any of the specified columns.
+subset_wall <- na.omit(subset_wall)
+# Remove spatial geometry and units from the subset for analysis.
+subset_wall <- drop_units(st_drop_geometry(subset_wall))
+
+# Scale 'Area' and 'Rectangularity' to have zero mean and unit variance.
+subset_wall <- subset_wall %>%
+  mutate(Area = scale(Area)) %>%
+  mutate(Rectangularity = scale(Rectangularity))
+
+# Determine the optimal number of clusters using the silhouette method.
+clust <- fviz_nbclust(subset_wall[c('Area', 'Rectangularity')], kmeans, method = "silhouette", linecolor = "gray30")
+# Extract the data from the fviz_nbclust result to find the maximum silhouette score.
+n_clust <- clust$data
+max_cluster <- as.numeric(n_clust$clusters[which.max(n_clust$y)])
+
+# Perform k-means clustering with the optimal number of clusters found.
+Cluster <- kmeans(subset_wall[c('Area', 'Rectangularity')], centers = max_cluster, nstart = 25)
+
+# Append the cluster assignments to the subset.
+subset_wall <- subset_wall %>%
+  mutate(Cluster = Cluster$cluster)
+
+# Join the cluster assignments back to the original 'wall' dataset using 'ID' as the key.
+wall <- left_join(wall, subset_wall %>%
+  dplyr::select(ID, Cluster), by = "ID")
+# Convert the 'Cluster' column to a factor for potential categorical analysis.
+wall$Cluster = as.factor(wall$Cluster)
+```
+
+### Optimal number of clusters (a) and scatter plot of the consequent division in clusters (b)
+
+```{r}
+#| label: fig-clusterGraph
+#| fig-cap: Results of the silhouette method with indicated the optimal number of clusters (a) and scatter plot of the consequent division in clusters (b).
+#| fig-width: 14
+#| fig.height: 10
+# Define custom colors for different clusters using a manual color scale.
+myfill <- scale_color_manual(values = c("#D2af81ff", "#b7bbbfff", "#1a9993ff"))
+
+# Assuming 'clust' is a ggplot object created earlier, apply a minimal theme and title.
+a <- clust +
+  theme_minimal() +
+  ggtitle("a") # Note: Replace "a" with a more descriptive title if necessary.
+
+# Create a scatter plot of 'Area' vs. 'Rectangularity', colored by 'Cluster'.
+b <- ggplot(wall, aes(x=Area, y=Rectangularity, color=Cluster)) +
+  geom_point() + # Plot points
+  myfill + # Apply the defined custom colors for clusters
+  theme_minimal() + # Use a minimal theme for a clean look
+  ggtitle("b") # Note: Replace "b" with a more descriptive title if necessary.
+
+# Arrange the two plots vertically in a single figure.
+fig.clusterGraph <- ggarrange(a, b, nrow = 2)
+
+# Display the arranged figure.
+fig.clusterGraph
+
+```
+
+```{r}
+#| label: cluster statistics
+#| output: false
+# Prepare the dataset for total statistics by copying 'wall' and assigning a uniform label "Total sample" to all observations.
+wallstats <- wall
+wallstats$Cluster <- "Total sample"
+
+# Calculate overall statistics after dropping geometry data, grouping by the newly assigned label.
+wallstats <- group_by(st_drop_geometry(wallstats), Cluster) %>%
+  summarise(
+    count = n(),  # Calculate the total number of observations
+    "Area_mean" = mean(Area, na.rm = TRUE),  # Calculate the mean of 'Area', excluding missing values
+    "rectangularity_mean" = mean(Rectangularity, na.rm = TRUE),  # Calculate the mean of 'Rectangularity', excluding missing values
+    "Depth_mean" = mean(Depth, na.rm = TRUE)  # Calculate the mean of 'Depth', excluding missing values
+  )
+
+# Calculate statistics for each existing cluster within the dataset.
+clusterstats <- group_by(st_drop_geometry(wall), Cluster) %>%
+  summarise(
+    count = n(),  # Count of observations within each cluster
+    "Area_mean" = mean(Area, na.rm = TRUE),  # Mean of 'Area' by cluster, excluding NA
+    "rectangularity_mean" = mean(Rectangularity, na.rm = TRUE),  # Mean of 'Rectangularity' by cluster, excluding NA
+    "Depth_mean" = mean(Depth, na.rm = TRUE)  # Mean of 'Depth' by cluster, excluding NA
+  )
+
+# Ensure the 'Cluster' column in 'clusterstats' is treated as character for consistent data manipulation.
+clusterstats$Cluster <- as.character(clusterstats$Cluster)
+
+# Initialize 'clusterstatistics' with the cluster-specific stats.
+clusterstatistics <- clusterstats
+
+# Append the overall statistics to the end of 'clusterstatistics', creating a comprehensive summary.
+clusterstatistics[nrow(clusterstatistics) + 1,] = wallstats
+
+
+```
+
+### Plots of the identified clusters on the wall stretches
+
+```{r}
+#| label: fig-clusterPlot
+#| fig-cap: Plotting of the identified clusters on the wall stretches.
+#| fig-width: 14
+#| fig.height: 8
+# Define custom fill colors for different clusters.
+myfill <- scale_fill_manual(values = c("#D2af81ff", "#b7bbbfff", "#1a9993ff"))
+
+# Create a spatial plot with 'Cluster' determining the fill color.
+fig.clusterPlot <- ggplot(wall, aes(fill = Cluster)) +
+  geom_sf(size = 0.06) + # Add spatial data with specified border size.
+  mytheme + # Apply a custom theme for styling.
+  myscale + # Apply custom scaling settings.
+  myfill + # Apply the defined custom fill colors for clusters.
+  theme(legend.position = c(0.935, 0.25)) + # Set legend position.
+  # Add annotations for specific locations on the map for context.
+  annotate("text", x = -14, y = 4, size=7.5, label = "Hayehutong") +
+  annotate("text", x = -14, y = -2, size=7.5, label = "Sichenggong") +
+  annotate("text", x = -14, y = -8, size=7.5, label = "Xiniwusu") +
+  annotate("text", x = -14, y = -14, size=7.5, label = "Yonghegong") +
+  annotate("text", x = -14, y = -20, size=7.5, label = "Bayinnuru")
+
+# Display the plot.
+fig.clusterPlot
+
+# Save the plot as a PNG file with specified dimensions and resolution.
+ggsave("fig.clusterplot.png", path="images", width = 25, height = 15, units = "in", dpi=600)
+```
+
+### Scatter plot of depth and area distribution by site type (a) and depth distribution by cluster (b)
+
+```{r}
+#| label: fig-depth 
+#| fig-cap: Scatter plot of depth and area distribution by site type (a) and depth distribution by cluster (b).
+#| fig-width: 10
+#| fig.height: 4.5
+# Remove 'Gap' column from the dataset to avoid analysis on this variable.
+wall_noNull <- wall
+wall_noNull$Gap <- NULL
+
+# Define custom fill colors for clusters and custom color scales for sites.
+myfill <- scale_fill_manual(values = c("#D2af81ff", "#b7bbbfff", "#1a9993ff", "#c6fe39", "#3963fe"))
+mycol <- scale_color_manual(values = c("#FED439FF", "#709AE1FF", "#8A9197FF", "#ff9993", "#9993ff"))
+
+# Plot 'a': Scatter plot of Area vs. Depth, colored by 'Site'.
+a <- ggplot(na.omit(wall_noNull), aes(x=Area, y=Depth)) +
+  geom_point(aes(color=Site)) +  # Points colored by 'Site'.
+  geom_smooth(method=lm, color="black") +  # Linear regression line across the scatter plot.
+  theme(legend.position = "none") +  # Remove legend for cleaner presentation.
+  mycol +  # Apply custom color scale for sites.
+  theme_minimal() +  # Use a minimal theme for a clean look.
+  ggtitle("Area vs. Depth by Site")  # Title for the plot.
+
+# Plot 'b': Boxplot of Depth by 'Cluster'.
+b <- ggplot(na.omit(wall_noNull), aes(x=Cluster, y=Depth, fill=Cluster)) +
+  geom_boxplot() +  # Boxplot showing distribution of 'Depth' by 'Cluster'.
+  theme(legend.position = "none") +  # Remove legend.
+  myfill +  # Apply custom fill colors for clusters.
+  theme_minimal() +  # Use a minimal theme.
+  ylab(NULL) +  # Remove y-axis label for a cleaner look.
+  ggtitle("Depth Distribution by Cluster") +  # Title for the plot.
+  annotate("text",
+           x = 1:length(table(na.omit(wall_noNull)$Cluster)),  # X positions for annotations.
+           y = aggregate(Depth ~ Cluster, na.omit(wall_noNull), median)[ , 2],  # Y positions for annotations.
+           label = paste("n=", table(na.omit(wall_noNull)$Cluster)),  # Annotation text showing counts per cluster.
+           vjust = -0.5, cex = 2.5)  # Adjust vertical position and size of annotation text.
+
+# Combine the two plots side by side.
+fig.depth <- ggarrange(a, b, ncol = 2)
+
+# Display the combined figure.
+fig.depth
+
+
+```
+
+### Volume by cluster
+
+```{r}
+#| label: tbl-sideSize 
+#| tbl-cap: Properties of the average stone block by cluster.
+# Calculate volumes using cluster-specific depth means.
+wall <- wall %>%
+  mutate(clustdepth = case_when(
+    Cluster == 1 ~ clusterstatistics$Depth_mean[1],  # Assign mean depth for Cluster 1.
+    Cluster == 2 ~ clusterstatistics$Depth_mean[2],  # Assign mean depth for Cluster 2.
+    Cluster == 3 ~ clusterstatistics$Depth_mean[3]   # Assign mean depth for Cluster 3.
+  ))
+wall$volume <- wall$Area * wall$clustdepth  # Compute volume as Area * depth.
+
+# Define a function to calculate the cuberoot, considering negative values.
+cuberoot = function(x) {
+  if(x < 0) { - (-x)^(1/3) }  # Correct cuberoot for negative numbers.
+  else { x^(1/3) }  # Standard cuberoot for positive numbers.
+}
+
+# Calculate overall statistics, treating the dataset as a single "cluster".
+wallstats <- wall
+wallstats$Cluster <- "Total sample"
+wallstats <- group_by(st_drop_geometry(wallstats), Cluster) %>%
+  summarise(
+    Count = n(),
+    "Mean volume (m^3)" = mean(volume, na.rm = TRUE),
+    "SD volume (m^3)" = sd(volume, na.rm = TRUE),
+    "IQR volume (m^3)" = IQR(volume, na.rm = TRUE),
+    "Average stone Side (m)" = cuberoot(mean(volume, na.rm = TRUE))  # Calculate average side length from volume.
+  )
+
+# Calculate statistics for each cluster separately.
+clusterstats <- group_by(st_drop_geometry(wall), Cluster) %>%
+  summarise(
+    Count = n(),
+    "Mean volume (m^3)" = mean(volume, na.rm = TRUE),
+    "SD volume (m^3)" = sd(volume, na.rm = TRUE),
+    "IQR volume (m^3)" = IQR(volume, na.rm = TRUE),
+    "Average stone side (m)" = cuberoot(mean(volume, na.rm = TRUE))  # Calculate average side length from volume.
+  )
+
+# Combine the statistics for individual clusters with the overall statistics.
+clusterstats$Cluster <- as.character(clusterstats$Cluster)  # Ensure 'Cluster' is character for consistency.
+clusterstatistics_volume <- clusterstats
+clusterstatistics_volume[nrow(clusterstatistics_volume) + 1,] = wallstats  # Append overall stats to cluster-specific stats.
+
+# Display the combined statistics in a table with custom formatting.
+kable(clusterstatistics_volume, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"),
+                full_width = T,
+                position = "left")
+
+
+```
+
+## Facade volume analysis and composition by wall type
+
+```{r}
+#| label: tbl-percentage 
+#| tbl-cap: Percentage of facade composition divided by blocks below x, between x and y, above y and gap area of walls of Type-A, Type-B and Type-C.
+# Calculate the area of wallgap and wallfilled using sf functions and remove the units for simplicity
+wallgap$Area_wallgap <- drop_units(st_area(wallgap))
+wallfilled$Area_wallfilled <- drop_units(st_area(wallfilled))
+
+# Calculate volumes for different types of wall sections, excluding specific sites for Type A
+## Type-A: Exclude 'Hayehutong' and 'Yonghegong' sites
+tA_wall <- subset(wall, wall$Site != "Hayehutong" & wall$Site != "Yonghegong")
+tA_wallgap <- subset(wallgap, wallgap$Site != "Hayehutong" & wallgap$Site != "Yonghegong")
+tA_wallfilled <- subset(wallfilled, wallfilled$Site != "Hayehutong" & wallfilled$Site != "Yonghegong")
+# Calculate the percentage of gap area relative to the filled area and total volume for type A
+tA_volperc_gap <- sum(tA_wallgap$Area_wallgap) * 100 / (sum(tA_wallfilled$Area_wallfilled))
+tA_volgap <- sum(tA_wall$volume) * tA_volperc_gap / 100
+tA_voltotal <- sum(tA_wall$volume) + tA_volgap
+
+## Type-B: Specific calculations for 'Hayehutong' site
+tB_wall <- subset(wall, wall$Site == "Hayehutong")
+tB_wallgap <- subset(wallgap, wallgap$Site == "Hayehutong")
+tB_wallfilled <- subset(wallfilled, wallfilled$Site == "Hayehutong")
+# Calculate the percentage of gap area and total volume for type B
+tB_volperc_gap <- sum(tB_wallgap$Area_wallgap) * 100 / (sum(tB_wallfilled$Area_wallfilled))
+tB_volgap <- sum(tB_wall$volume) * tB_volperc_gap / 100
+tB_voltotal <- sum(tB_wall$volume) + tB_volgap
+
+## Type-C: Specific calculations for 'Yonghegong' site
+tC_wall <- subset(wall, wall$Site == "Yonghegong")
+tC_wallgap <- subset(wallgap, wallgap$Site == "Yonghegong")
+tC_wallfilled <- subset(wallfilled, wallfilled$Site == "Yonghegong")
+# Calculate the percentage of gap area and total volume for type C
+tC_volperc_gap <- sum(tC_wallgap$Area_wallgap) * 100 / (sum(tC_wallfilled$Area_wallfilled))
+tC_volgap <- sum(tC_wall$volume) * tC_volperc_gap / 100
+tC_voltotal <- sum(tC_wall$volume) + tC_volgap
+
+##Calculation by linear m
+### type-A
+tA_volperc_upto0.02 <- sum(tA_wall$volume[tA_wall$volume<=0.02])*100/tA_voltotal
+tA_volperc_0.02to0.05 <- sum(tA_wall$volume[tA_wall$volume>0.02 & tA_wall$volume<=0.05])*100/tA_voltotal
+tA_volperc_over0.05 <- sum(tA_wall$volume[tA_wall$volume>0.05])*100/tA_voltotal
+### type-B
+tB_volperc_upto0.02 <- sum(tB_wall$volume[tB_wall$volume<=0.02])*100/tB_voltotal
+tB_volperc_0.02to0.05 <- sum(tB_wall$volume[tB_wall$volume>0.02 & tB_wall$volume<=0.05])*100/tB_voltotal
+tB_volperc_over0.05 <- sum(tB_wall$volume[tB_wall$volume>0.05])*100/tB_voltotal
+### type-C
+tC_volperc_upto0.02 <- sum(tC_wall$volume[tC_wall$volume<=0.02])*100/tC_voltotal
+tC_volperc_0.02to0.05 <- sum(tC_wall$volume[tC_wall$volume>0.02 & tC_wall$volume<=0.05])*100/tC_voltotal
+tC_volperc_over0.05 <- sum(tC_wall$volume[tC_wall$volume>0.05])*100/tC_voltotal
+### fa?ade composition matrix
+composition <- matrix(1:12, nrow = 4, ncol = 3)
+composition <- rbind(c(tA_volperc_upto0.02,tB_volperc_upto0.02,tC_volperc_upto0.02),
+c(tA_volperc_0.02to0.05,tB_volperc_0.02to0.05,tC_volperc_0.02to0.05),
+c(tA_volperc_over0.05,tB_volperc_over0.05,tC_volperc_over0.05),
+c(tA_volperc_gap,tB_volperc_gap,tC_volperc_gap))
+rownames(composition) <- c("upto0.02","0.02to0.05","over0.05", "gap")
+colnames(composition) <- c("tA","tB","tC")
+### facade composition table
+compositiontab <- composition
+rownames(compositiontab) <- c("Percentage of blocks up to 0.02m^3","Percentage of blocks between 0.02 and 0.05m^3", "Percentage of blocks over 0.05m^3","Gaps")
+colnames(compositiontab) <- c("Type-A","Type-B","Type-C")
+kable(compositiontab, digits = 4) %>%
+kable_styling(bootstrap_options = c("condensed"),
+full_width = T,
+position = "left")
+```
+
+### Wall volumes by block
+
+```{r}
+#| label: tbl-volume
+#| tbl-cap: Type-A, Type-B and Type-C wall volumes divided by block composition.
+# For Type-A: Calculate average volumes and total facade volume based on block size categories and overall area
+tA_avervol_upto0.02 <- tA_voltotal / sum(tA_wallfilled$Area) * composition["upto0.02", "tA"] / 100
+tA_avervol_0.02to0.05 <- tA_voltotal / sum(tA_wallfilled$Area) * composition["0.02to0.05", "tA"] / 100
+tA_avervol_over0.05 <- tA_voltotal / sum(tA_wallfilled$Area) * composition["over0.05", "tA"] / 100
+tA_facadevol <- tA_avervol_upto0.02 + tA_avervol_0.02to0.05 + tA_avervol_over0.05
+
+# For Type-B: Repeat the calculation for blocks and total facade volume
+tB_avervol_upto0.02 <- tB_voltotal / sum(tB_wallfilled$Area) * composition["upto0.02", "tB"] / 100
+tB_avervol_0.02to0.05 <- tB_voltotal / sum(tB_wallfilled$Area) * composition["0.02to0.05", "tB"] / 100
+tB_avervol_over0.05 <- tB_voltotal / sum(tB_wallfilled$Area) * composition["over0.05", "tB"] / 100
+tB_facadevol <- tB_avervol_upto0.02 + tB_avervol_0.02to0.05 + tB_avervol_over0.05
+
+# For Type-C: Repeat the calculation for blocks and total facade volume
+tC_avervol_upto0.02 <- tC_voltotal / sum(tC_wallfilled$Area) * composition["upto0.02", "tC"] / 100
+tC_avervol_0.02to0.05 <- tC_voltotal / sum(tC_wallfilled$Area) * composition["0.02to0.05", "tC"] / 100
+tC_avervol_over0.05 <- tC_voltotal / sum(tC_wallfilled$Area) * composition["over0.05", "tC"] / 100
+tC_facadevol <- tC_avervol_upto0.02 + tC_avervol_0.02to0.05 + tC_avervol_over0.05
+
+# Create a matrix to store the calculated volumes for each type and category
+stonevolume <- rbind(
+  c(tA_avervol_upto0.02, tB_avervol_upto0.02, tC_avervol_upto0.02),
+  c(tA_avervol_0.02to0.05, tB_avervol_0.02to0.05, tC_avervol_0.02to0.05),
+  c(tA_avervol_over0.05, tB_avervol_over0.05, tC_avervol_over0.05),
+  c(tA_facadevol, tB_facadevol, tC_facadevol)
+)
+rownames(stonevolume) <- c("upto0.02", "0.01to0.05", "over0.05", "total")
+colnames(stonevolume) <- c("tA", "tB", "tC")
+
+# Convert the matrix into a table and format it for presentation
+stonevolumetab <- stonevolume
+rownames(stonevolumetab) <- c("Volume of blocks up to 0.02 (m^3)", "Volume of blocks between 0.02 and 0.05 (m^3)", "Volume of blocks over 0.05 (m^3)", "Total (m^3)")
+colnames(stonevolumetab) <- c("Type-A", "Type-B", "Type-C")
+kable(stonevolumetab, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+```
+
+### Total volume of stones and rubble for a wall section by type
+
+```{r}
+#| label: tbl-total 
+#| tbl-cap: Total volume of stones and rubble for a wall section 2.2 m deep and 1 m high of Type-A, Type-B and Type-C walls.
+# Define fixed dimensions for the wall section
+sectiondepth <- 2.2 # Depth of the wall section in meters
+sectionheight <- 1 # Height of the wall section in meters
+volsection <- 1 * sectiondepth * sectionheight # Calculate volume of the section
+
+# Calculate volumes of stones and rubble for Type-A
+tA_volstones <- tA_facadevol * 2 * sectionheight # Calculate stone volume for Type-A
+tA_volrubble <- volsection - tA_volstones # Calculate remaining rubble volume for Type-A
+
+# Calculate volumes of stones and rubble for Type-B
+tB_volstones <- tB_facadevol * 2 * sectionheight # Calculate stone volume for Type-B
+tB_volrubble <- volsection - tB_volstones # Calculate remaining rubble volume for Type-B
+
+# Calculate volumes of stones and rubble for Type-C
+tC_volstones <- tC_facadevol * 2 * sectionheight # Calculate stone volume for Type-C
+tC_volrubble <- volsection - tC_volstones # Calculate remaining rubble volume for Type-C
+
+# Prepare matrix for the volumes of stones and rubble for each type
+stonevolume <- rbind(
+  c(tA_volstones, tB_volstones, tC_volstones), # Row for stone volumes
+  c(tA_volrubble, tB_volrubble, tC_volrubble)  # Row for rubble volumes
+)
+rownames(stonevolume) <- c("volstones", "volrubble") # Assign row names
+colnames(stonevolume) <- c("tA", "tB", "tC") # Assign column names for each type
+
+# Convert the matrix to a table and apply formatting for presentation
+stonevolumetab <- stonevolume # Create a table from the matrix
+rownames(stonevolumetab) <- c("Stone volume (m^3)", "Rubble volume (m^3)") # Set descriptive row names
+colnames(stonevolumetab) <- c("Type-A", "Type-B", "Type-C") # Set column names to indicate wall types
+
+# Display the table using kable from knitr and apply kableExtra styling
+kable(stonevolumetab, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"),
+                full_width = T,
+                position = "left")
+
+
+```
+
+### Table of independent rates
+
+```{r}
+#| label: tbl-independentrates 
+#| tbl-cap: Energetics rates employed in the analysis independent of wall height.
+# Define the energetics index for each activity in person-hours per cubic meter (ph/m³)
+in_quarrywall <- 0.09 # For quarrying wall stones
+in_quarryrubble <- 0.5 # For quarrying rubble
+in_leveling <- 0.3 # For leveling activities
+in_buildrubbleearth <- 0.375 # For assembling rubble and earth fill
+
+in_quarrylost <- 0.15 # 15% increase of the effective volume due to loss, not directly added to the matrix
+
+# Construct the energetics matrix with the defined indices
+energetics <- matrix(1:4, nrow = 4, ncol = 1) # Initial placeholder matrix creation, later overwritten
+energetics <- rbind(
+  in_quarrywall,
+  in_quarryrubble,
+  in_leveling,
+  in_buildrubbleearth
+)
+
+# Assign meaningful row names to the energetics matrix
+rownames(energetics) <- c(
+  "Stone quarry (m^3/ph)",
+  "Rubble quarry (m^3/ph)",
+  "Leveling (m^3/ph)",
+  "Assembly rubble and earth fill (m^3/ph)"
+)
+
+# Define column name for the matrix
+colnames(energetics) <- "Rates"
+
+# Display the energetics matrix as a formatted table using kable and kable_styling for aesthetics
+kable(energetics, digits = 4) %>% # Use 4 decimal places for precision
+  kable_styling(
+    bootstrap_options = c("condensed"), # Use a condensed style for the table
+    full_width = T, # Extend the table to the full width of the container
+    position = "left" # Align the table to the left
+  )
+
+```
+
+### Table of dependent rates
+
+```{r}
+#| label: tbl-dependentrates
+#| tbl-cap: Energetics rates employed in the analysis dependent on wall height.
+# Define the energetics index for assembling stone blocks of various sizes
+a <- 4
+b <- 0.3
+h <- 3
+w <- 2.9
+in_buildstone0.02to0.05 <- 1 / (6 * (a/2 + 0.2*a*(h-1) + b/(2*w)))  # For blocks between 0.02 and 0.05 m³
+in_buildstoneupto0.02 <- 1.42 * in_buildstone0.02to0.05 # For blocks up to 0.02 m³
+in_buildstoneover0.05 <- 0.79 * in_buildstone0.02to0.05 # For blocks above 0.05 m³
+
+# Create a matrix to summarize the energetics indices
+energetics <- matrix(1:3, nrow = 3, ncol = 1) # Placeholder matrix, to be overwritten
+energetics <- rbind(
+  c(in_buildstoneupto0.02),
+  c(in_buildstone0.02to0.05),
+  c(in_buildstoneover0.05)
+)
+
+# Assign meaningful row names to the matrix to describe each energetics index
+rownames(energetics) <- c(
+  "Assembly up to 0.02 m^3 (m^3/ph)",
+  "Assembly between 0.02 and 0.05 m^3 (m^3/ph)",
+  "Assembly above 0.05 m^3 (m^3/ph)"
+)
+
+# Define a column name for the matrix to indicate the measurement unit
+colnames(energetics) <- c("Rates (m³/ph)")
+
+# Display the energetics matrix as a formatted table using the kable function and apply styling for aesthetics
+kable(energetics, digits = 4) %>% # Use 4 decimal places for precision in displaying rates
+  kable_styling(
+    bootstrap_options = c("condensed"), # Use a condensed styling option for the table
+    full_width = T, # Extend the table to the full width of the container
+    position = "left" # Align the table to the left
+  )
+
+```
+
+## Table of costs by type
+
+```{r}
+#| label: tbl-costs 
+#| tbl-cap: Costs estimated for building wall Type-A, Type-B and Type-C expressed as a linear rate of ph per m. 
+# Set wall dimensions used in calculations
+wallheight <- 3
+wallwidth <- 2.9
+
+## Material acquisition calculations for each wall type, incorporating quarry loss
+### Type-A
+tA_materialstone <- (tA_volstones + tA_volstones * in_quarrylost) * wallheight / in_quarrywall
+tA_materialrubble <- tA_volrubble * wallheight / in_quarryrubble
+tA_materialtotal <- tA_materialstone + tA_materialrubble
+
+### Type-B
+tB_materialstone <- (tB_volstones + tB_volstones * in_quarrylost) * wallheight / in_quarrywall
+tB_materialrubble <- tB_volrubble * wallheight / in_quarryrubble
+tB_materialtotal <- tB_materialstone + tB_materialrubble
+
+### Type-C
+tC_materialstone <- (tC_volstones + tC_volstones * in_quarrylost) * wallheight / in_quarrywall
+tC_materialrubble <- tC_volrubble * wallheight / in_quarryrubble
+tC_materialtotal <- tC_materialstone + tC_materialrubble
+
+## Leveling the terrain calculations for each type, using a fixed energetics index
+tA_leveling <- wallwidth / in_leveling
+tB_leveling <- wallwidth / in_leveling
+tC_leveling <- wallwidth / in_leveling
+
+## Wall assembly calculations, including facade and fill, for each wall type
+### Type-A
+tA_assemblyfacade <- (((tA_facadevol * (composition["upto0.02", "tA"] / 100)) / in_buildstoneupto0.02) +
+((tA_facadevol * (composition["0.02to0.05", "tA"] / 100)) / in_buildstone0.02to0.05) +
+((tA_facadevol * (composition["over0.05", "tA"] / 100)) / in_buildstoneover0.05)) * wallheight * 2
+tA_assemblyfill <- tA_volrubble * wallheight / in_buildrubbleearth
+tA_assemplytotal <- tA_assemblyfacade + tA_assemblyfill
+
+### Type-B
+tB_assemblyfacade <- (((tB_facadevol * (composition["upto0.02", "tB"] / 100)) / in_buildstoneupto0.02) +
+((tB_facadevol * (composition["0.02to0.05", "tB"] / 100)) / in_buildstone0.02to0.05) +
+((tB_facadevol * (composition["over0.05", "tB"] / 100)) / in_buildstoneover0.05)) * wallheight * 2
+tB_assemblyfill <- tB_volrubble * wallheight / in_buildrubbleearth
+tB_assemplytotal <- tB_assemblyfacade + tB_assemblyfill
+
+### Type-C
+tC_assemblyfacade <- (((tC_facadevol * (composition["upto0.02", "tC"] / 100)) / in_buildstoneupto0.02) +
+((tC_facadevol * (composition["0.02to0.05", "tC"] / 100)) / in_buildstone0.02to0.05) +
+((tC_facadevol * (composition["over0.05", "tC"] / 100)) / in_buildstoneover0.05)) * wallheight * 2
+tC_assemblyfill <- tC_volrubble * wallheight / in_buildrubbleearth
+tC_assemplytotal <- tC_assemblyfacade + tC_assemblyfill
+
+## Total construction effort calculations for each type
+tA_total <- tA_materialtotal + tA_leveling + tA_assemplytotal
+tB_total <- tB_materialtotal + tB_leveling + tB_assemplytotal
+tC_total <- tC_materialtotal + tC_leveling + tC_assemplytotal
+
+## Calculate mean values for comparison across types
+meanmaterialstone <- mean(c(tA_materialstone, tB_materialstone, tC_materialstone))
+meanmaterialrubble <- mean(c(tA_materialrubble, tB_materialrubble, tC_materialrubble))
+meanleveling <- mean(c(tA_leveling, tB_leveling, tC_leveling))
+meanassemblyfacade <- mean(c(tA_assemblyfacade, tB_assemblyfacade, tC_assemblyfacade))
+meanassemblyfill <- mean(c(tA_assemblyfill, tB_assemblyfill, tC_assemblyfill))
+meantotal <- mean(c(tA_total, tB_total, tC_total))
+
+## Construct and display an energetic matrix summarizing the efforts for material acquisition, leveling, and assembly
+estimates <- rbind(
+  c(tA_materialstone, tB_materialstone, tC_materialstone, meanmaterialstone),
+  c(tA_materialrubble, tB_materialrubble, tC_materialrubble, meanmaterialrubble),
+  c(tA_leveling, tB_leveling, tC_leveling, meanleveling),
+  c(tA_assemblyfacade, tB_assemblyfacade, tC_assemblyfacade, meanassemblyfacade),
+  c(tA_assemblyfill, tB_assemblyfill, tC_assemblyfill, meanassemblyfill),
+  c(tA_total, tB_total, tC_total, meantotal)
+)
+rownames(estimates) <- c("Stone quarry (ph/m)", "Rubble quarry (ph/m)", "Leveling (ph/m)", "Assembly facade (ph/m)", "Assembly fill (ph/m)", "Total wall construction (ph/m)")
+colnames(estimates) <- c("Type-A", "Type-B", "Type-C", "Average")
+
+# Display the estimates in a styled table
+kable(estimates, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+## Table of total cost in person-hour and in days
+
+```{r}
+#| label: tbl-results
+#| tbl-cap: Total costs estimated in person-hour and in days, the latter considering a hypothetical 5 h a day. 
+# Calculate the average total labour cost needed for wall construction in person-hours per meter
+averagewalltotal <- mean(c(tA_total, tB_total, tC_total))
+
+# Define the lengths of different wall sections in meters
+qin_stonelength <- 345053
+han_n_stonelength <- 8533
+han_s_stonelength <- 10012
+
+# Specify the daily working hours
+workinghour <- 5
+
+# Calculate total effort in person-hours and convert to person-days for each wall section
+qin_stonetotal <- averagewalltotal * qin_stonelength / workinghour
+han_n_stonetotal <- averagewalltotal * han_n_stonelength / workinghour
+han_s_stonetotal <- averagewalltotal * han_s_stonelength / workinghour
+
+# Organize results into a matrix and label appropriately for clarity
+results <- matrix(1:6, nrow = 3, ncol = 2) # Initial placeholder matrix, to be overwritten
+results <- rbind(
+  c(averagewalltotal * qin_stonelength, qin_stonetotal),
+  c(averagewalltotal * han_n_stonelength, han_n_stonetotal),
+  c(averagewalltotal * han_s_stonelength, han_s_stonetotal)
+)
+rownames(results) <- c("Qin Wall (Stone section)", "Han north wall (Stone Section)", "Han south wall (Stone Section)")
+colnames(results) <- c("Person-hour", "Person-days")
+
+# Display the calculated results in a formatted table using kable and kableExtra for styling
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+# Rammed Earth Wall
+
+```{r}
+#| label: tbl-earth 
+# Sum the confirmed and uncertain lengths for earth sections at each site
+qin_earth <- 79481
+han_n_earth <- 468398
+han_s_earth <- 398739
+qin_unsure <- 43212
+han_n_unsure <- 26544
+han_s_unsure <- 0
+qin_earthlength <- qin_earth + qin_unsure
+han_n_earthlength <- han_n_earth + han_n_unsure
+han_s_earthlength <- han_s_earth + han_s_unsure
+
+# Calculate the volume of the wall per meter using trapezoidal formula
+upper <- 1.5 # Upper width of the wall in meters
+under <- 2.9 # Bottom width of the wall in meters
+height <- 3 # Height of the wall in meters
+wallvolume <- 1 * ((upper + under) / 2) * height # Volume formula for trapezoidal wall section
+
+# Define the rate of earth construction in cubic meters per person-day based on experimental data
+earthratehour <- 0.62 # Work rate in m^3 per person-hour, calculated from Xie et al 2021
+earthrate <- earthratehour * workinghour # Convert to m^3 per person-day based on working hours
+
+# Calculate the total volume for earth sections at each site
+qin_earthvolume <- qin_earthlength * wallvolume
+han_n_earthvolume <- han_n_earthlength * wallvolume
+han_s_earthvolume <- han_s_earthlength * wallvolume
+
+# Calculate the total person-days required for constructing the earth sections at each site
+qin_earthtotal <- qin_earthvolume / earthrate
+han_n_earthtotal <- han_n_earthvolume / earthrate
+han_s_earthtotal <- han_s_earthvolume / earthrate
+
+# Organize the results into a matrix and label appropriately for clarity
+results <- matrix(1:3, nrow = 3, ncol = 1) # Initial placeholder matrix, to be overwritten
+results <- rbind(
+  c(qin_earthtotal),
+  c(han_n_earthtotal),
+  c(han_s_earthtotal)
+)
+rownames(results) <- c("Qin Wall (Earth section)", "Han north wall (Earth Section)", "Han south wall (Earth Section)")
+colnames(results) <- c("Person-days")
+
+# Display the calculated results in a formatted table using kable and apply styling for aesthetics
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+# Mixed Wall
+
+```{r}
+#| label: tbl-mixed 
+# Define the total lengths of mixed wall sections at each site in meters
+qinstoneearthlength <- 6521
+han_n_stoneearthlength <- 14822
+han_s_stoneearthlength <- 110676
+
+# Calculate the total person-days required for each mixed wall section
+# The calculations incorporate average rates for material acquisition (stone), leveling, assembly (facade), and earthwork
+# Dividing by working hours converts the effort into person-days
+qinstoneearthtotal <- ((meanmaterialstone + meanleveling + meanassemblyfacade) * qinstoneearthlength / workinghour + (wallvolume / earthrate) * qinstoneearthlength)
+han_n_stoneearthtotal <- ((meanmaterialstone + meanleveling + meanassemblyfacade) * han_n_stoneearthlength / workinghour + (wallvolume / earthrate) * han_n_stoneearthlength)
+han_s_stoneearthtotal <- ((meanmaterialstone + meanleveling + meanassemblyfacade) * han_s_stoneearthlength / workinghour + (wallvolume / earthrate) * han_s_stoneearthlength)
+
+# Organize the calculated total person-days for each mixed wall section into a matrix
+results <- matrix(1:3, nrow = 3, ncol = 1) # Initial placeholder matrix, to be overwritten
+results <- rbind(
+  c(qinstoneearthtotal),
+  c(han_n_stoneearthtotal),
+  c(han_s_stoneearthtotal)
+)
+rownames(results) <- c("Qin Wall (mixed wall)", "Han north wall (mixed wall)", "Han south wall (mixed wall)")
+colnames(results) <- c("Person-days")
+
+# Display the results in a formatted table using kable and apply styling for better readability
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+## Table of total labour cost of wall
+
+```{r}
+#| label: tbl-sumup
+# Calculate total labour required for each wall by adding up the person-days for stone, earth, and mixed sections.
+qinlabour <- qin_stonetotal + qin_earthtotal + qinstoneearthtotal
+han_n_labour <- han_n_stonetotal + han_n_earthtotal + han_n_stoneearthtotal
+han_s_labour <- han_s_stonetotal + han_s_earthtotal + han_s_stoneearthtotal
+
+# Organize the labour calculations into a matrix for display. Each row represents a different wall (Qin, Han North, Han South),
+# and each column represents a different type of construction within that wall (Stone wall, Earth wall, Mixed wall, and the Total labour).
+results <- matrix(1:12, nrow = 3, ncol = 4) # Initial placeholder matrix, to be overwritten
+results <- rbind(
+  c(qin_stonetotal, qin_earthtotal, qinstoneearthtotal, qinlabour),
+  c(han_n_stonetotal, han_n_earthtotal, han_n_stoneearthtotal, han_n_labour),
+  c(han_s_stonetotal, han_s_earthtotal, han_s_stoneearthtotal, han_s_labour)
+)
+rownames(results) <- c("Qin Wall (Person days)", "Han north wall (Person days)", "Han south wall (Person days)")
+colnames(results) <- c("Stone wall", "Earth wall", "Stone Earth wall", "Total")
+
+# Display the results in a formatted table using the `kable` function.
+kable(results, digits = 0) %>% # Use zero digits after the decimal point for cleaner number formatting
+  kable_styling(bootstrap_options = c("condensed"), # Use a condensed table style for a more compact display
+                full_width = T, # Extend the table to the full width of its container
+                position = "left") # Align the table to the left side of its container
+
+```
+
+# Workforce on the Wall
+
+```{r}
+#| label: combine the ratio of the total Qin wall
+# Define total lengths of the walls (not directly used in these calculations)
+qinlength <- 474267
+han_n_length <- 518297
+han_s_length <- 519427
+
+# Calculate construction time and labour force required for the Qin wall, adjusting for efficiency and terrain with qinratio
+qinratio <- 0.94 # The ratio is set from a calculation of the construction of 44 forts on the frontier.
+qinconstructtime <- 2 * 180 * qinratio  # Adjusted construction time for the Qin wall
+qinlabourforce <- qinlabour / qinconstructtime  # Labour force calculation for Qin wall
+
+# Set construction times for Han North and South walls and calculate respective labour forces
+han_n_constructtime <- 180  # Preset construction time for Han North wall
+han_n_labourforce <- han_n_labour / han_n_constructtime  # Labour force calculation for Han North wall
+
+han_s_constructtime <- 180  # Preset construction time for Han South wall
+han_s_labourforce <- han_s_labour / han_s_constructtime  # Labour force calculation for Han South wall
+
+# Organize and present the results in a matrix and a styled table
+results <- matrix(1:9, nrow = 3, ncol = 3)
+results <- rbind(
+  c(qinlabour, qinconstructtime, qinlabourforce),
+  c(han_n_labour, han_n_constructtime, han_n_labourforce),
+  c(han_s_labour, han_s_constructtime, han_s_labourforce)
+)
+rownames(results) <- c("Qin Wall", "Han north wall", "Han south wall")
+colnames(results) <- c("Person-Days", "Construction time (estimate in days)", "Labour force on the wall")
+
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+# Beacons
+
+```{r}
+# Define the number of beacons made of stone, earth, and a combination of earth and stone for the Qin wall
+qinbeacon_stone <- 353
+qinbeacon_earth <- 438
+qinbeacon_earthstone <- 37 + qinbeacon_stone
+
+# Define the number of beacons for the Han north wall
+han_n_beacon_stone <- 5
+han_n_beacon_earth <- 2
+han_n_beacon_earthstone <- 4 + han_n_beacon_stone
+
+# Define the number of beacons for the Han south wall
+han_s_beacon_stone <- 37
+han_s_beacon_earth <- 56
+han_s_beacon_earthstone <- 5 + han_s_beacon_stone
+
+# Calculate the total number of beacons for each wall by adding the earth beacons and mixed (earth+stone) beacons
+qinbeacon_total <- qinbeacon_earth + qinbeacon_earthstone
+han_n_beacon_total <- han_n_beacon_earth + han_n_beacon_earthstone
+han_s_beacon_total <- han_s_beacon_earth + han_s_beacon_earthstone
+
+# Organize the beacon counts into a matrix for display
+results <- matrix(1:9, nrow = 3, ncol = 3) # Initial placeholder matrix, to be overwritten
+results <- rbind(
+  c(qinbeacon_earth, qinbeacon_earthstone, qinbeacon_total),
+  c(han_n_beacon_earth, han_n_beacon_earthstone, han_n_beacon_total),
+  c(han_s_beacon_earth, han_s_beacon_earthstone, han_s_beacon_total)
+)
+rownames(results) <- c("Qin Wall Beacon", "Han north wall Beacon", "Han south wall Beacon")
+colnames(results) <- c("Earth", "Stone Earth", "Total")
+
+# Display the results in a formatted table using the `kable` function from the knitr package and apply styling with `kable_styling` from the kableExtra package
+kable(results, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+## Stone composition of beacon yard wall per 0.5 m\^3
+
+```{r}
+# Calculate the mean facade volume. The stones used for beacons are similar with for beacons
+mean_facadevol <- (tA_facadevol + tB_facadevol + tC_facadevol) / 3
+
+# Yard wall section dimensions and volumes
+yardsectiondepth <- 0.5
+yardsectionheight <- 1
+yardvolsection <- 1 * yardsectiondepth * yardsectionheight # Volume of the section
+
+yard_volstones <- mean_facadevol * 2 * yardsectionheight # Calculated stone volume for yard wall
+yard_volrubble <- yardvolsection - yard_volstones # Remaining volume is considered as rubble
+
+# Prepare matrix to store the volumes of stones and rubble for the yard wall
+stonevolume <- rbind(
+  c(yard_volstones),
+  c(yard_volrubble)
+)
+rownames(stonevolume) <- c("volstones", "volrubble")
+colnames(stonevolume) <- c("Yard wall")
+
+# Convert the matrix into a table and apply formatting for presentation
+stonevolumetab <- stonevolume
+rownames(stonevolumetab) <- c("Stone volume (m^3)", "Rubble volume (m^3)")
+colnames(stonevolumetab) <- c("Yard wall")
+
+# Display the stone and rubble volume calculations for the yard wall in a formatted table
+kable(stonevolumetab, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+```
+
+### Labour rates for beacon yard wall
+
+```{r}
+#| label: tbl-costs-yardwalls
+# Define yard wall dimensions and rates
+yardwallheight <- 2
+yardwallwidth <- 0.5
+yardwalllength <- 65.25
+in_buildyard <- 1 / (6 * (4/2 + 0.2*4*(2-1) + 0.3/(2*0.5))) 
+
+# Material acquisition calculations
+yard_materialstone <- (yard_volstones + yard_volstones * in_quarrylost) * yardwallheight / in_quarrywall
+yard_materialrubble <- yard_volrubble * yardwallheight / in_quarryrubble
+yard_materialtotal <- yard_materialstone + yard_materialrubble
+
+# Leveling the terrain calculations
+yard_leveling <- yardwallwidth / in_leveling
+
+# Wall assembly calculations
+yard_assemblyfacade <- (mean_facadevol / in_buildyard) * yardwallheight * 2
+yard_assemblyfill <- yard_volrubble * yardwallheight / in_buildrubbleearth
+yard_assemplytotal <- yard_assemblyfacade + yard_assemblyfill
+
+# Total construction effort calculation
+yard_total <- yard_materialtotal + yard_leveling + yard_assemplytotal
+
+# Energetic matrix for yard wall construction
+estimates <- matrix(1:7, nrow = 7, ncol = 1)
+estimates <- rbind(
+  c(yard_materialstone),
+  c(yard_materialrubble),
+  c(yard_leveling),
+  c(yard_assemblyfacade),
+  c(yard_assemblyfill),
+  c(yard_total)
+)
+rownames(estimates) <- c("Stone quarry (ph/m)", "Rubble quarry (ph/m)", "Leveling (ph/m)", "Assembly facade (ph/m)", "Assembly fill (ph/m)", "Total wall construction (ph/m)")
+colnames(estimates) <- c("Yard wall")
+
+# Displaying the energetic matrix in a table
+kable(estimates, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+### Beacon yard wall labour cost in person hour and person day
+
+```{r}
+#| label: qin stone beacon yard labour cost
+qinbeacon_yardcost <- qinbeacon_total * yardwalllength * yard_total
+qinbeacon_yardcost
+#Results
+results <- matrix(1:2, nrow = 1, ncol = 2)
+results <- rbind(c(qinbeacon_yardcost,qinbeacon_yardcost/workinghour))
+rownames(results) <- c("Qin Wall")
+colnames(results) <- c("Person-hour","Person-day")
+kable(results, digits = 4) %>%
+kable_styling(bootstrap_options = c("condensed"),
+full_width = T,
+position = "left")
+```
+
+## Rammed earth beaon labour cost
+
+```{r}
+#| label: Earth beaon labour cost
+# Calculate beacon volumes
+# Qin Wall beacon volume using the formula for a truncated cone
+qinbeaconr1 <- 3
+qinbeaconr2 <- 5
+qinbeaconheight <- 4
+qin_beaconvolume <- (1/3) * pi * qinbeaconheight * (qinbeaconr1^2 + qinbeaconr2^2 + (qinbeaconr1 * qinbeaconr2))
+
+# Han Walls beacon volumes using the formula for a rectangular prism
+han_n_beaconvolume <- 7.3 * 6.5 * 3 # Dimensions provided for a single beacon
+han_s_beaconvolume <- 7.3 * 6.5 * 3 # Same dimensions assumed for simplicity
+
+# Calculate the labour required for constructing beacon rammed earth platforms
+# Qin beacon labour calculation, corrected to include the earthrate for conversion to person-days
+qinbeacon_earthcost <- qin_beaconvolume / earthrate * qinbeacon_total
+
+# Han beacon labour calculations, assuming the `han_n_beacon_total` and `han_s_beacon_total` represent the total number of beacons
+han_n_beacon_earthcost <- han_n_beaconvolume / earthrate * han_n_beacon_total
+han_s_beacon_earthcost <- han_s_beaconvolume / earthrate * han_s_beacon_total
+
+# Prepare the results for presentation
+results <- matrix(1:3, nrow = 3, ncol = 1) # Initial placeholder matrix, to be overwritten
+results <- rbind(
+  c(qinbeacon_earthcost),
+  c(han_n_beacon_earthcost),
+  c(han_s_beacon_earthcost)
+)
+rownames(results) <- c("Qin Wall", "Han north wall", "Han south wall")
+colnames(results) <- c("Beacon rammed earth platform (Person-days)")
+
+# Display the calculated results in a formatted table using kable and apply styling for aesthetics
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+## Stone composition of beacon beacon facade per 0.3 m\^3
+
+```{r}
+#| label: qin earth beacon stone cover labour cost
+# Calculate the slant height of the truncated cone (beacon tower)
+l <- sqrt((qinbeaconr1 - qinbeaconr2)^2 + qinbeaconheight^2)
+
+# Calculate the surface area (s) to be covered with stones, excluding the base
+s <- pi * (qinbeaconr1^2 + qinbeaconr2^2 + qinbeaconr1 * l + qinbeaconr2 * l) - pi * qinbeaconr1^2
+
+# Determine the labour intensity for building the beacon's stone cover
+in_buildqinbeacon <- 1 / (6 * (4/2 + 0.2*4*(l-1) + 0.3/(2*0.3)))
+
+# Calculate facade lengths and volumes for stone and rubble construction
+qinbeaconfacadelength <- s / l
+qinbeaconfacadedepth <- 0.3
+qinbeaconfacadesectionheight <- 1
+qinbeaconfacadevolsection <- 1 * qinbeaconfacadedepth * qinbeaconfacadesectionheight
+qinbeaconfacade_volstones <- mean_facadevol * 1 * qinbeaconfacadesectionheight
+qinbeaconfacade_volrubble <- qinbeaconfacadevolsection - qinbeaconfacade_volstones
+
+# Prepare matrix to store volumes for stones and rubble
+materialsvolume <- matrix(1:2, nrow = 2, ncol = 1)
+stonevolume <- rbind(
+  c(qinbeaconfacade_volstones),
+  c(qinbeaconfacade_volrubble)
+)
+rownames(stonevolume) <- c("volstones", "volrubble")
+colnames(stonevolume) <- c("Yard wall")
+
+# Convert the matrix into a table and format for presentation
+stonevolumetab <- stonevolume
+rownames(stonevolumetab) <- c("Stone volume (m^3)", "Rubble volume (m^3)")
+colnames(stonevolumetab) <- c("Qin Beacon Facade")
+
+# Display the stone and rubble volume calculations in a formatted table
+kable(stonevolumetab, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+### Qin earth beacon stone facade labour rate
+
+```{r}
+# Define beacon facade wall dimensions and construction rate
+qinbeaconfacadewallheight <- l
+qinbeaconfacadewallwidth <- 0.3
+
+# Material acquisition calculations
+qinbeaconfacade_materialstone <- (qinbeaconfacade_volstones + qinbeaconfacade_volstones * in_quarrylost) * qinbeaconfacadewallheight / in_quarrywall
+qinbeaconfacade_materialrubble <- qinbeaconfacade_volrubble * qinbeaconfacadewallheight / in_quarryrubble
+qinbeaconfacade_materialtotal <- qinbeaconfacade_materialstone + qinbeaconfacade_materialrubble
+
+# Leveling the terrain labour calculation
+qinbeaconfacade_leveling <- qinbeaconfacadewallwidth / in_leveling
+
+# Wall assembly labour calculation
+qinbeaconfacade_assemblyfacade <- (mean_facadevol / in_buildqinbeacon) * qinbeaconfacadewallheight * 1
+qinbeaconfacade_assemblyfill <- qinbeaconfacade_volrubble * qinbeaconfacadewallheight / in_buildrubbleearth
+qinbeaconfacade_assemplytotal <- qinbeaconfacade_assemblyfacade + qinbeaconfacade_assemblyfill
+
+# Calculate the total labour required for the beacon facade wall construction
+qinbeaconfacade_total <- qinbeaconfacade_materialtotal + qinbeaconfacade_leveling + qinbeaconfacade_assemplytotal
+
+# Organize and display the construction labour estimates in a table
+estimates <- matrix(1:7, nrow = 7, ncol = 1)
+estimates <- rbind(
+  c(qinbeaconfacade_materialstone),
+  c(qinbeaconfacade_materialrubble),
+  c(qinbeaconfacade_leveling),
+  c(qinbeaconfacade_assemblyfacade),
+  c(qinbeaconfacade_assemblyfill),
+  c(qinbeaconfacade_total)
+)
+rownames(estimates) <- c("Stone quarry (ph/m)", "Rubble quarry (ph/m)", "Leveling (ph/m)", "Assembly facade (ph/m)", "Assembly fill (ph/m)", "Total wall construction (ph/m)")
+colnames(estimates) <- c("Beacon facade wall")
+
+# Present the table with kable styling
+kable(estimates, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+### Qin beacon stone facade in person-hour
+
+```{r}
+#| label:Qin beacon stone cover tbl-costs
+# Calculate the total facade length for all Qin beacons
+qin_beaconfacade_length <- qinbeaconfacadelength * qinbeacon_earthstone
+
+# Calculate the total labor in person-days for building the facade wall across all Qin beacons
+qinbeacon_beaconfacade <- qinbeacon_earthstone * qin_beaconfacade_length * qinbeaconfacade_total
+
+# Display the result in a formatted table
+results <- matrix(c(qinbeacon_beaconfacade), nrow = 1, ncol = 1)
+rownames(results) <- c("Qin beacon stone facade")
+colnames(results) <- c("Person-hours")
+
+kable(results, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+```
+
+## Stone composition for Han beacon facade per 1.1 m\^3
+
+```{r}
+#| label: tbl-beacon facade unit
+# Define section dimensions for the Han beacon facade
+hanbeaconfacadesectiondepth <- 1.1
+hanbeaconfacadesectionheight <- 1
+hanbeaconfacadevolsection <- 1 * hanbeaconfacadesectiondepth * hanbeaconfacadesectionheight
+
+# Calculate volumes for stones and rubble based on the mean facade volume
+hanbeaconfacade_volstones <- mean_facadevol * 1 * hanbeaconfacadesectionheight
+hanbeaconfacade_volrubble <- hanbeaconfacadevolsection - hanbeaconfacade_volstones
+
+# Organize volumes into a matrix
+materialsvolume <- matrix(1:2, nrow = 2, ncol = 1)
+stonevolume <- rbind(
+  c(hanbeaconfacade_volstones),
+  c(hanbeaconfacade_volrubble)
+)
+rownames(stonevolume) <- c("volstones", "volrubble")
+colnames(stonevolume) <- c("Han Beacon Facade")
+
+# Convert the matrix into a table and apply formatting for presentation
+stonevolumetab <- stonevolume
+rownames(stonevolumetab) <- c("Stone volume (m^3)", "Rubble volume (m^3)")
+colnames(stonevolumetab) <- c("Han beacon facade")
+
+# Display the table using kable and apply styling
+kable(stonevolumetab, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+### Costs estimated for Han beacon facade wall
+
+```{r}
+# Define facade wall dimensions and volume for the Han beacon
+hanbeaconfacadewallheight <- 3
+hanbeaconfacadewallwidth <- 1.1
+in_buildhanbeacon <- 1 / (6 * (4/2 + 0.2*4*(3-1) + 0.3/(2*1.1)))
+han_beaconvolume <- 7.5 * 6.5 * 3  # Predefined total volume
+
+# Material acquisition for stone and rubble
+hanbeaconfacade_materialstone <- (hanbeaconfacade_volstones + hanbeaconfacade_volstones * in_quarrylost) * hanbeaconfacadewallheight / in_quarrywall
+hanbeaconfacade_materialrubble <- hanbeaconfacade_volrubble * hanbeaconfacadewallheight / in_quarryrubble
+hanbeaconfacade_materialtotal <- hanbeaconfacade_materialstone + hanbeaconfacade_materialrubble
+
+# Leveling the terrain
+hanbeaconfacade_leveling <- hanbeaconfacadewallwidth / in_leveling
+
+# Wall assembly
+hanbeaconfacade_assemblyfacade <- (mean_facadevol / in_buildhanbeacon) * hanbeaconfacadewallheight
+hanbeaconfacade_assemblyfill <- hanbeaconfacade_volrubble * hanbeaconfacadewallheight / in_buildrubbleearth
+hanbeaconfacade_assemplytotal <- hanbeaconfacade_assemblyfacade + hanbeaconfacade_assemblyfill
+
+# Calculate the total labor required
+hanbeaconfacade_total <- hanbeaconfacade_materialtotal + hanbeaconfacade_leveling + hanbeaconfacade_assemplytotal
+
+# Organize and display the construction labor estimates in a table
+estimates <- matrix(1:7, nrow = 7, ncol = 1)
+estimates <- rbind(
+  c(hanbeaconfacade_materialstone),
+  c(hanbeaconfacade_materialrubble),
+  c(hanbeaconfacade_leveling),
+  c(hanbeaconfacade_assemblyfacade),
+  c(hanbeaconfacade_assemblyfill),
+  c(hanbeaconfacade_total)
+)
+rownames(estimates) <- c("Stone quarry (ph/m)", "Rubble quarry (ph/m)", "Leveling (ph/m)", "Assembly facade (ph/m)", "Assembly fill (ph/m)", "Total wall construction (ph/m)")
+colnames(estimates) <- c("Han beacon facade wall")
+
+# Present the table with kable styling
+kable(estimates, digits = 4) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+### Labour cost for Han beacon facade
+
+```{r}
+#| label: tbl-costs-hanfacade
+#| tbl-cap: Costs estimated for building beacon facade wall expressed as person-day. 
+# Define the number of beacon stones and facade length for Han north wall and south wall
+han_n_beaconfacade_length <- 27 * han_n_beacon_earthstone
+han_s_beaconfacade_length <- 27 * han_s_beacon_earthstone
+
+# Calculate the labor required for constructing the facade of the beacon towers
+han_n_beacon_beaconfacade <- han_n_beacon_earthstone * han_n_beaconfacade_length * hanbeaconfacade_total
+han_s_beacon_beaconfacade <- han_s_beacon_earthstone * han_s_beaconfacade_length * hanbeaconfacade_total
+
+# Organize the labor required into a matrix and calculate person-days for Qin, Han North, and Han South walls
+qinbeacon_facadelabour <- qinbeacon_beaconfacade / workinghour
+han_n_beacon_facadelabour <- han_n_beacon_beaconfacade / workinghour
+han_s_beacon_facadelabour <- han_s_beacon_beaconfacade / workinghour
+
+results <- matrix(1:3, nrow = 3, ncol = 1) # Initial placeholder matrix, to be overwritten
+results <- rbind(
+  c(qinbeacon_facadelabour),
+  c(han_n_beacon_facadelabour),
+  c(han_s_beacon_facadelabour)
+)
+rownames(results) <- c("Qin wall", "Han north wall", "Han south wall")
+colnames(results) <- c("Beacon facade(Person-days)")
+
+# Display the calculated results in a formatted table using kable and apply styling for aesthetics
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+
+```
+
+## Total labour cost for beacon
+
+```{r}
+#| label: Total person-days for beacon construction
+# Calculate total person-days for beacon construction, including earthwork and facade labour costs
+qinbeacon_construction <- qinbeacon_earthcost + (qinbeacon_beaconfacade + qinbeacon_yardcost) / workinghour 
+han_n_beacon_construction <- han_n_beacon_earthcost + (han_n_beacon_beaconfacade / workinghour)
+han_s_beacon_construction <- han_s_beacon_earthcost + (han_s_beacon_beaconfacade / workinghour)
+
+# Organize the calculated total labor for each wall's beacon construction into a matrix
+results <- matrix(1:3, nrow = 3, ncol = 1)  # Initial placeholder matrix, to be overwritten
+results <- rbind(
+    c(qinbeacon_construction),
+    c(han_n_beacon_construction),
+    c(han_s_beacon_construction)
+)
+rownames(results) <- c("Qin wall labour cost", "Han north wall labour cost", "Han south wall labour cost")
+colnames(results) <- c("Beacon Construction (Person-days)")
+
+# Present the table with kable styling for a clear and concise display of the labor costs
+kable(results, digits = 0) %>%
+    kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+```
+
+### Total labour cost for wall and beacon construction
+
+```{r}
+#| label: tbl-results-cost-final
+# Initialize the matrix with appropriate dimensions
+results <- matrix(1:9, nrow = 3, ncol = 3)
+
+# Calculate the total labor for wall and beacon construction, and their sum
+qinbeacon_construction <- qinbeacon_earthcost + (qinbeacon_beaconfacade + qinbeacon_yardcost) / workinghour
+han_n_beacon_construction <- han_n_beacon_earthcost + (han_n_beacon_beaconfacade) / workinghour
+han_s_beacon_construction <- han_s_beacon_earthcost + (han_s_beacon_beaconfacade) / workinghour
+
+qintotal <-  qinlabour + qinbeacon_construction
+han_n_total <- han_n_labour + han_n_beacon_construction
+han_s_total <- han_s_labour + han_s_beacon_construction
+
+# Populate the matrix with calculated values
+results <- rbind(
+  c(qinlabour, qinbeacon_construction, qintotal),
+  c(han_n_labour, han_n_beacon_construction, han_n_total),
+  c(han_s_labour, han_s_beacon_construction, han_s_total)
+)
+rownames(results) <- c("Qin wall labour cost", "Han north wall labour cost", "Han south wall labour cost")
+colnames(results) <- c("Wall Construction (Person-days)", "Beacon Construction(Person-days)", "Total(Person-days)")
+
+# Display the results in a styled table
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+# Total Workforce with Supervisory
+
+```{r}
+#| label: tbl-results-withsupervisory
+# Initialize the matrix for the results
+results <- matrix(1:9, nrow = 3, ncol = 3)
+
+# Calculate the total labor force
+qin_labourforce_total <- (qinlabour + qinbeacon_construction) / qinconstructtime
+han_n_labourforce_total <- (han_n_labour + han_n_beacon_construction) / han_n_constructtime
+han_s_labourforce_total <- (han_s_labour + han_s_beacon_construction) / han_s_constructtime
+
+# Populate the matrix with calculated values
+results <- rbind(
+  c(qinconstructtime, qin_labourforce_total, qin_labourforce_total * 1.16),
+  c(han_n_constructtime, han_n_labourforce_total, han_n_labourforce_total * 1.16),
+  c(han_s_constructtime, han_s_labourforce_total, han_s_labourforce_total * 1.16)
+)
+rownames(results) <- c("Qin wall labour cost", "Han north wall labour cost", "Han south wall labour cost")
+colnames(results) <- c("Construct time (days)", "Workforce", "Workforce with supervision")
+
+# Display the results in a styled table
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+# Food Supply for Wall Construction Only
+
+```{r}
+#| label: tbl-results-remote
+# Calculate the food cost for the Qin wall construction labor, adjusting by the same cost factor of 0.83
+qin_foodcost <- qintotal * 0.83
+# Repeat the calculation for the Han North wall
+han_n_foodcost <- han_n_total * 0.83
+# And for the Han South wall
+han_s_foodcost <- han_s_total * 0.83
+
+# Determine the number of cart transport trips needed for the Qin wall using the calculated food cost
+qin_cart <- qin_foodcost / 250
+# And for the Han North wall
+han_n_cart <- han_n_foodcost / 250
+# And for the Han South wall
+han_s_cart <- han_s_foodcost / 250
+
+# Calculate the manpower needed for cart transportation for the Qin wall, multiplying by 6 men per cart
+qin_cartmen <- qin_cart * 6
+# Repeat for the Han North wall
+han_n_cartmen <- han_n_cart * 6
+# And for the Han South wall
+han_s_cartmen <- han_s_cart * 6
+
+# Prepare the results matrix for display
+results <- matrix(1:9, nrow = 3, ncol = 3)
+# Populate the matrix with calculated values
+results <- rbind(
+  c(qin_foodcost, qin_cart, qin_cartmen),
+  c(han_n_foodcost, han_n_cart, han_n_cartmen),
+  c(han_s_foodcost, han_s_cart, han_s_cartmen)
+)
+# Set the row and column names for clarity
+rownames(results) <- c("Qin wall", "Han north wall", "Han south wall")
+colnames(results) <- c("Food cost (Dou)", "cart transport trips", "Person on cart (6 men per cart)")
+
+# Display the table with kable styling for readability
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+
+```
+
+## Considering food loss during trips
+
+```{r}
+# Considering food loss during trips, unit: Dou
+qin_foodcost_withloss <- qin_foodcost/0.39
+han_foodcost_withloss <- (han_n_foodcost + han_s_foodcost)/0.923
+
+qin_cart_trips <- qin_foodcost_withloss/250
+han_cart_trips <- han_foodcost_withloss/250
+
+qin_cart_hauler_wall <- qin_cart_trips*6
+han_cart_hauler_wall <- han_cart_trips*6
+
+# qin supply distance: 800 km. Round trip doubles the distance. Speed: 25 km/day.
+# han supply distance: 100 km
+qin_days <- 800*2/25
+han_days <- 100*2/25
+
+qin_carthauler_personday_withloss <- qin_cart_hauler_wall * qin_days
+han_carthauler_personday_withloss <- han_cart_hauler_wall * han_days
+
+# Prepare the results matrix for display
+results <- matrix(1:2, nrow = 2, ncol = 2)
+# Populate the matrix with calculated values
+results <- rbind(
+  c(qin_carthauler_personday_withloss, qin_cart_hauler_wall),
+  c(han_carthauler_personday_withloss, han_cart_hauler_wall)
+)
+
+# Set the row and column names for clarity
+rownames(results) <- c("Qin logistical supply (not including immigration)", "Han logistical supply")
+colnames(results) <- c("Person-days","Logistic Personel")
+
+# Display the table with kable styling for readability
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
+
+# Combination of the Qin Immigration and Qin Wall Project
+
+```{r}
+# Set the number of immigrants
+immigration <- 350000
+# Calculate the total annual food cost in Dou for immigrants, assuming 2 years at a cost adjusted by 0.83 as food cost per person-day
+immigration_foodcost <- immigration * 360 * 2 * 0.83
+# Total food cost considering the loss rate
+totalfoodcost <- immigration_foodcost + qin_foodcost
+# Considering the loss during the transportation
+totalfoodcost_withloss <- totalfoodcost/0.39
+# Cart trips
+total_cart_withloss <- totalfoodcost_withloss / 250
+# Total cart haulers
+total_cart_hauler <- total_cart_withloss * 6
+# Total person-days
+total_persondays <- total_cart_hauler * qin_days
+
+# Prepare the results matrix for display
+results <- matrix(1:2, nrow = 1, ncol = 2)
+# Populate the matrix with calculated values
+results <- rbind(
+  c(total_persondays, total_cart_hauler)
+)
+
+# Set the row and column names for clarity
+rownames(results) <- c("Qin logistical supply (including immigration)")
+colnames(results) <- c("Person-days","Logistic Personel")
+
+# Display the table with kable styling for readability
+kable(results, digits = 0) %>%
+  kable_styling(bootstrap_options = c("condensed"), full_width = T, position = "left")
+
+```
